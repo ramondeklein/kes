@@ -92,19 +92,18 @@ func (h Hash) String() string {
 //
 // It encodes the key's binary data as base64 since some KMS keystore
 // implementations do not accept or handle binary data properly.
-func EncodeKeyVersion(key KeyVersion) ([]byte, error) {
+func EncodeKeyVersion(key KeyVersion) (string, error) {
 	proto, err := pb.Marshal(&key)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 
-	b := make([]byte, base64.StdEncoding.EncodedLen(len(proto)))
-	base64.StdEncoding.Encode(b, proto)
-	return b, nil
+	return base64.StdEncoding.EncodeToString(proto), nil
 }
 
 // ParseKeyVersion parses b as ParseKeyVersion.
-func ParseKeyVersion(b []byte) (KeyVersion, error) {
+func ParseKeyVersion(text string) (KeyVersion, error) {
+	b := []byte(text)
 	if json.Valid(b) {
 		type JSON struct {
 			Bytes     []byte       `json:"bytes"`
@@ -139,7 +138,7 @@ func ParseKeyVersion(b []byte) (KeyVersion, error) {
 		}, nil
 	}
 
-	raw, err := base64.StdEncoding.DecodeString(string(b))
+	raw, err := base64.StdEncoding.DecodeString(text)
 	if err != nil {
 		return KeyVersion{}, err
 	}

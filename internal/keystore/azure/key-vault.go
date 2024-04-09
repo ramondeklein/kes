@@ -89,7 +89,7 @@ func (s *Store) Status(ctx context.Context) (kes.KeyStoreState, error) {
 // purging but will eventually give up and fail. However,
 // a subsequent create may succeed once KeyVault has purged
 // the secret completely.
-func (s *Store) Create(ctx context.Context, name string, value []byte) error {
+func (s *Store) Create(ctx context.Context, name string, value string) error {
 	_, stat, err := s.client.GetSecret(ctx, name, "")
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return err
@@ -106,7 +106,7 @@ func (s *Store) Create(ctx context.Context, name string, value []byte) error {
 		return fmt.Errorf("azure: failed to create '%s': failed to check whether '%s' already exists: %s (%s)", name, name, stat.Message, stat.ErrorCode)
 	}
 
-	stat, err = s.client.CreateSecret(ctx, name, string(value))
+	stat, err = s.client.CreateSecret(ctx, name, value)
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return err
 	}
@@ -126,7 +126,7 @@ func (s *Store) Create(ctx context.Context, name string, value []byte) error {
 		}
 
 		for i := 0; i < 7; i++ {
-			stat, err = s.client.CreateSecret(ctx, name, string(value))
+			stat, err = s.client.CreateSecret(ctx, name, value)
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return err
 			}
@@ -150,29 +150,6 @@ func (s *Store) Create(ctx context.Context, name string, value []byte) error {
 	default:
 		return fmt.Errorf("azure: failed to create '%s': %s (%s)", name, stat.Message, stat.ErrorCode)
 	}
-}
-
-// Set creates the given key-value pair as KeyVault secret.
-//
-// Since KeyVault does not support an atomic create resp.
-// create-only-if-not-exists, Set cannot exclude data
-// race situations when multiple clients try to create
-// the same secret at the same time.
-//
-// However, Set checks whether a secret with the given
-// name exists, and if it does, returns kes.ErrKeyExists.
-//
-// Further, a secret may not exist but may be in a soft delete
-// state. In this case, Set tries to purge the deleted
-// secret and then tries to create it. However, KeyVault
-// purges deleted secrets in the background such that
-// an incoming create fails with HTTP 409 Conflict. Therefore,
-// Set tries to create the secret multiple times after
-// purging but will eventually give up and fail. However,
-// a subsequent create may succeed once KeyVault has purged
-// the secret completely.
-func (s *Store) Set(ctx context.Context, name string, value []byte) error {
-	return s.Create(ctx, name, value)
 }
 
 // Delete deletes and purges the secret from KeyVault.
@@ -242,32 +219,32 @@ func (s *Store) Delete(ctx context.Context, name string) error {
 // Since Get has to fetch and filter the secrets versions first
 // before actually accessing the secret, Get may return inconsistent
 // responses when the secret is modified concurrently.
-func (s *Store) Get(ctx context.Context, name string) ([]byte, error) {
+func (s *Store) Get(ctx context.Context, name string) (string, error) {
 	version, stat, err := s.client.GetFirstVersion(ctx, name)
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return nil, err
+		return "", err
 	}
 	if err != nil {
-		return nil, fmt.Errorf("azure: failed to get '%s': failed to list versions: %v", name, err)
+		return "", fmt.Errorf("azure: failed to get '%s': failed to list versions: %v", name, err)
 	}
 	if stat.StatusCode == http.StatusNotFound && stat.ErrorCode == "NoObjectVersions" {
-		return nil, kesdk.ErrKeyNotFound
+		return "", kesdk.ErrKeyNotFound
 	}
 	if stat.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("azure: failed to get '%s': failed to list versions: %s (%s)", name, stat.Message, stat.ErrorCode)
+		return "", fmt.Errorf("azure: failed to get '%s': failed to list versions: %s (%s)", name, stat.Message, stat.ErrorCode)
 	}
 
 	value, stat, err := s.client.GetSecret(ctx, name, version)
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return nil, err
+		return "", err
 	}
 	if err != nil {
-		return nil, fmt.Errorf("azure: failed to get '%s': %v", name, err)
+		return "", fmt.Errorf("azure: failed to get '%s': %v", name, err)
 	}
 	if stat.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("azure: failed to get '%s': %s (%s)", name, stat.Message, stat.ErrorCode)
+		return "", fmt.Errorf("azure: failed to get '%s': %s (%s)", name, stat.Message, stat.ErrorCode)
 	}
-	return []byte(value), nil
+	return value, nil
 }
 
 // List returns a new Iterator over the names of

@@ -40,7 +40,7 @@ func TestConnectWithCredentials(t *testing.T) {
 
 	// create key
 	keyValue := time.Now().Format(time.RFC3339Nano)
-	err = c1.Create(ctx, keyName, []byte(keyValue))
+	err = c1.Create(ctx, keyName, keyValue)
 	if err != nil {
 		t.Fatalf("error creating key: %s", err)
 	}
@@ -53,8 +53,8 @@ func TestConnectWithCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatalf("error fetching key: %v", err)
 	}
-	if string(data) != keyValue {
-		t.Fatalf("got %q, but expected %q", string(data), keyValue)
+	if data != keyValue {
+		t.Fatalf("got %q, but expected %q", data, keyValue)
 	}
 
 	// list keys
@@ -81,7 +81,7 @@ func TestConnectWithCredentials(t *testing.T) {
 
 	// recreate the key (deleted secret should be purged automatically)
 	keyValue = time.Now().Format(time.RFC3339Nano)
-	err = c1.Create(ctx, keyName, []byte(keyValue))
+	err = c1.Create(ctx, keyName, keyValue)
 	if err != nil {
 		t.Fatalf("error (re)creating the key: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestConnectWithCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatalf("error fetching key %q: %v", keyName, err)
 	}
-	if string(data) != keyValue {
-		t.Errorf("Got value %q, but expected value %q", string(data), keyValue)
+	if data != keyValue {
+		t.Errorf("Got value %q, but expected value %q", data, keyValue)
 	}
 }

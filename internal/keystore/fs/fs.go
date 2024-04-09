@@ -17,7 +17,6 @@ import (
 	"sync"
 	"time"
 
-	"aead.dev/mem"
 	"github.com/minio/kes"
 	"github.com/minio/kes/internal/keystore"
 	kesdk "github.com/minio/kms-go/kes"
@@ -77,7 +76,7 @@ func (s *Store) Status(context.Context) (kes.KeyStoreState, error) {
 // the Conn directory if and only if no such file exists.
 //
 // It returns kes.ErrKeyExists if such a file already exists.
-func (s *Store) Create(_ context.Context, name string, value []byte) error {
+func (s *Store) Create(_ context.Context, name string, value string) error {
 	if err := validName(name); err != nil {
 		return err
 	}
@@ -85,7 +84,7 @@ func (s *Store) Create(_ context.Context, name string, value []byte) error {
 	defer s.lock.Unlock()
 
 	filename := filepath.Join(s.dir, name)
-	switch err := s.create(filename, value); {
+	switch err := s.create(filename, []byte(value)); {
 	case errors.Is(err, os.ErrExist):
 		return kesdk.ErrKeyExists
 	case err != nil:
@@ -98,32 +97,22 @@ func (s *Store) Create(_ context.Context, name string, value []byte) error {
 // Get reads the content of the named file within the Conn
 // directory. It returns kes.ErrKeyNotFound if no such file
 // exists.
-func (s *Store) Get(_ context.Context, name string) ([]byte, error) {
-	const MaxSize = 1 * mem.MiB
-
+func (s *Store) Get(_ context.Context, name string) (string, error) {
 	if err := validName(name); err != nil {
-		return nil, err
+		return "", err
 	}
 	s.lock.RLock()
 	defer s.lock.RUnlock()
 
-	file, err := os.Open(filepath.Join(s.dir, name))
+	value, err := os.ReadFile(filepath.Join(s.dir, name))
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, kesdk.ErrKeyNotFound
+		return "", kesdk.ErrKeyNotFound
 	}
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	defer file.Close()
 
-	value, err := io.ReadAll(mem.LimitReader(file, MaxSize))
-	if err != nil {
-		return nil, err
-	}
-	if err = file.Close(); err != nil {
-		return nil, err
-	}
-	return value, nil
+	return string(value), nil
 }
 
 // Delete deletes the named file within the Conn directory if

@@ -136,7 +136,7 @@ func (s *Store) Status(ctx context.Context) (kes.KeyStoreState, error) {
 // Create creates the given key-value pair at Gemalto if and only
 // if the given key does not exist. If such an entry already exists
 // it returns kes.ErrKeyExists.
-func (s *Store) Create(ctx context.Context, name string, value []byte) error {
+func (s *Store) Create(ctx context.Context, name string, value string) error {
 	type Request struct {
 		Type  string `json:"dataType"`
 		Value string `json:"material"`
@@ -146,7 +146,7 @@ func (s *Store) Create(ctx context.Context, name string, value []byte) error {
 	body, err := json.Marshal(Request{
 		Type:  "seed", // KeySecure supports blob, password and seed
 		Name:  name,
-		Value: string(value),
+		Value: value,
 	})
 	if err != nil {
 		return fmt.Errorf("gemalto: failed to create key '%s': %v", name, err)
@@ -182,16 +182,9 @@ func (s *Store) Create(ctx context.Context, name string, value []byte) error {
 	return nil
 }
 
-// Set creates the given key-value pair at Gemalto if and only
-// if the given key does not exist. If such an entry already exists
-// it returns kes.ErrKeyExists.
-func (s *Store) Set(ctx context.Context, name string, value []byte) error {
-	return s.Create(ctx, name, value)
-}
-
 // Get returns the value associated with the given key.
 // If no entry for the key exists it returns kes.ErrKeyNotFound.
-func (s *Store) Get(ctx context.Context, name string) ([]byte, error) {
+func (s *Store) Get(ctx context.Context, name string) (string, error) {
 	type Response struct {
 		Value string `json:"material"`
 	}
@@ -199,38 +192,38 @@ func (s *Store) Get(ctx context.Context, name string) ([]byte, error) {
 	url := fmt.Sprintf("%s/api/v1/vault/secrets/%s/export?type=name", s.config.Endpoint, name)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
 	if err != nil {
-		return nil, fmt.Errorf("gemalto: failed to access key '%s': %v", name, err)
+		return "", fmt.Errorf("gemalto: failed to access key '%s': %v", name, err)
 	}
 	req.Header.Set("Authorization", s.client.AuthToken())
 
 	resp, err := s.client.Do(req)
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return nil, err
+		return "", err
 	}
 	if err != nil {
-		return nil, fmt.Errorf("gemalto: failed to access key '%s': %v", name, err)
+		return "", fmt.Errorf("gemalto: failed to access key '%s': %v", name, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, kesdk.ErrKeyNotFound
+		return "", kesdk.ErrKeyNotFound
 	}
 	if resp.StatusCode != http.StatusOK {
 		response, err := parseServerError(resp)
 		if err != nil {
-			return nil, fmt.Errorf("gemalto: '%s': failed to parse server response: %v", resp.Status, err)
+			return "", fmt.Errorf("gemalto: '%s': failed to parse server response: %v", resp.Status, err)
 		}
-		return nil, fmt.Errorf("gemalto: failed to access key %q: %q (%d)", name, response.Message, response.Code)
+		return "", fmt.Errorf("gemalto: failed to access key %q: %q (%d)", name, response.Message, response.Code)
 	}
 
 	var response Response
 	if err = json.NewDecoder(mem.LimitReader(resp.Body, 2*mem.MiB)).Decode(&response); err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return nil, err
+			return "", err
 		}
-		return nil, fmt.Errorf("gemalto: failed to parse server response: %v", err)
+		return "", fmt.Errorf("gemalto: failed to parse server response: %v", err)
 	}
-	return []byte(response.Value), nil
+	return response.Value, nil
 }
 
 // Delete removes a the value associated with the given key

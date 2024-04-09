@@ -5,7 +5,6 @@
 package kesconf_test
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -24,17 +23,17 @@ type SetupFunc func(context.Context, kes.KeyStore, string) error
 const ranStringLength = 8
 
 var createTests = []struct {
-	Args       map[string][]byte
+	Args       map[string]string
 	Setup      SetupFunc
 	ShouldFail bool
 }{
 	{ // 0
-		Args: map[string][]byte{"edge-test": []byte("edge-test-value")},
+		Args: map[string]string{"edge-test": "edge-test-value"},
 	},
 	{ // 1
-		Args: map[string][]byte{"edge-test": []byte("edge-test-value")},
+		Args: map[string]string{"edge-test": "edge-test-value"},
 		Setup: func(ctx context.Context, s kes.KeyStore, suffix string) error {
-			return s.Create(ctx, "edge-test-"+suffix, []byte("t"))
+			return s.Create(ctx, "edge-test-"+suffix, "t")
 		},
 		ShouldFail: true,
 	},
@@ -63,24 +62,24 @@ func testCreate(ctx context.Context, store kes.KeyStore, t *testing.T, seed stri
 }
 
 var getTests = []struct {
-	Args       map[string][]byte
+	Args       map[string]string
 	Setup      SetupFunc
 	ShouldFail bool
 }{
 	{ // 0
-		Args: map[string][]byte{"edge-test": []byte("edge-test-value")},
+		Args: map[string]string{"edge-test": "edge-test-value"},
 		Setup: func(ctx context.Context, s kes.KeyStore, suffix string) error {
-			return s.Create(ctx, "edge-test-"+suffix, []byte("edge-test-value"))
+			return s.Create(ctx, "edge-test-"+suffix, "edge-test-value")
 		},
 	},
 	{ // 1
-		Args:       map[string][]byte{"edge-test": []byte("edge-test-value")},
+		Args:       map[string]string{"edge-test": "edge-test-value"},
 		ShouldFail: true,
 	},
 	{ // 1
-		Args: map[string][]byte{"edge-test": []byte("edge-test-value")},
+		Args: map[string]string{"edge-test": "edge-test-value"},
 		Setup: func(ctx context.Context, s kes.KeyStore, suffix string) error {
-			return s.Create(ctx, "edge-test-"+suffix, []byte("edge-test-value2"))
+			return s.Create(ctx, "edge-test-"+suffix, "edge-test-value2")
 		},
 		ShouldFail: true,
 	},
@@ -102,11 +101,11 @@ func testGet(ctx context.Context, store kes.KeyStore, t *testing.T, seed string)
 				if err != nil {
 					t.Errorf("Test %d: failed to get key '%s': %v", i, secretKet, err)
 				}
-				if !bytes.Equal(v, value) {
-					t.Errorf("Test %d: failed to get key: got '%s' - want '%s'", i, string(v), string(value))
+				if v != value {
+					t.Errorf("Test %d: failed to get key: got '%s' - want '%s'", i, v, value)
 				}
 			}
-			if test.ShouldFail && err == nil && bytes.Equal(v, value) {
+			if test.ShouldFail && err == nil && v == value {
 				t.Errorf("Test %d: getting key '%s' should have failed: %v", i, secretKet, err)
 			}
 		}

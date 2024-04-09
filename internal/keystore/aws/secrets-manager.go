@@ -130,10 +130,10 @@ func (s *Store) Status(ctx context.Context) (kes.KeyStoreState, error) {
 // If the SecretsManager.KMSKeyID is set AWS will use this key ID to
 // encrypt the values. Otherwise, AWS will use the default key ID for
 // encrypting secrets at the AWS SecretsManager.
-func (s *Store) Create(ctx context.Context, name string, value []byte) error {
+func (s *Store) Create(ctx context.Context, name string, value string) error {
 	createOpt := secretsmanager.CreateSecretInput{
 		Name:         aws.String(name),
-		SecretString: aws.String(string(value)),
+		SecretString: aws.String(value),
 	}
 	if s.config.KMSKeyID != "" {
 		createOpt.KmsKeyId = aws.String(s.config.KMSKeyID)
@@ -152,52 +152,31 @@ func (s *Store) Create(ctx context.Context, name string, value []byte) error {
 	return nil
 }
 
-// Set stores the given key-value pair at the AWS SecretsManager
-// if and only if it doesn't exists. If such an entry already exists
-// it returns kes.ErrKeyExists.
-//
-// If the SecretsManager.KMSKeyID is set AWS will use this key ID to
-// encrypt the values. Otherwise, AWS will use the default key ID for
-// encrypting secrets at the AWS SecretsManager.
-func (s *Store) Set(ctx context.Context, name string, value []byte) error {
-	return s.Create(ctx, name, value)
-}
-
 // Get returns the value associated with the given key.
 // If no entry for key exists, it returns kes.ErrKeyNotFound.
-func (s *Store) Get(ctx context.Context, name string) ([]byte, error) {
+func (s *Store) Get(ctx context.Context, name string) (string, error) {
 	response, err := s.client.GetSecretValueWithContext(ctx, &secretsmanager.GetSecretValueInput{
 		SecretId: aws.String(name),
 	})
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return nil, err
+			return "", err
 		}
 		if err, ok := err.(awserr.Error); ok {
 			switch err.Code() {
 			case secretsmanager.ErrCodeDecryptionFailure:
-				return nil, fmt.Errorf("aws: cannot access '%s': %v", name, err)
+				return "", fmt.Errorf("aws: cannot access '%s': %v", name, err)
 			case secretsmanager.ErrCodeResourceNotFoundException:
-				return nil, kesdk.ErrKeyNotFound
+				return "", kesdk.ErrKeyNotFound
 			}
 		}
-		return nil, fmt.Errorf("aws: failed to read '%s': %v", name, err)
+		return "", fmt.Errorf("aws: failed to read '%s': %v", name, err)
 	}
 
-	// AWS has two different ways to store a secret. Either as
-	// "SecretString" or as "SecretBinary". While they *seem* to
-	// be equivalent from an API point of view, AWS console e.g.
-	// only shows "SecretString" not "SecretBinary".
-	// However, AWS demands and specifies that only one is present -
-	// either "SecretString" or "SecretBinary" - we can check which
-	// one is present and safely assume that the other one isn't.
-	var value []byte
-	if response.SecretString != nil {
-		value = []byte(*response.SecretString)
-	} else {
-		value = response.SecretBinary
+	if response.SecretString == nil {
+		return "", nil
 	}
-	return value, nil
+	return *response.SecretString, nil
 }
 
 // Delete removes the key-value pair from the AWS SecretsManager, if

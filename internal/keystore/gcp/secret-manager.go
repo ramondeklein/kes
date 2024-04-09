@@ -130,7 +130,7 @@ func (s *Store) Status(ctx context.Context) (kes.KeyStoreState, error) {
 // Creating a secret at the GCP SecretManager requires first creating
 // secret itself and then adding a secret version with some payload
 // data. The payload data contains the actual value.
-func (s *Store) Create(ctx context.Context, name string, value []byte) error {
+func (s *Store) Create(ctx context.Context, name string, value string) error {
 	secret, err := s.client.CreateSecret(ctx, &secretmanagerpb.CreateSecretRequest{
 		Parent:   path.Join("projects", s.config.ProjectID),
 		SecretId: name,
@@ -155,7 +155,7 @@ func (s *Store) Create(ctx context.Context, name string, value []byte) error {
 	_, err = s.client.AddSecretVersion(ctx, &secretmanagerpb.AddSecretVersionRequest{
 		Parent: secret.Name,
 		Payload: &secretmanagerpb.SecretPayload{
-			Data: value,
+			Data: []byte(value),
 		},
 	})
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -167,32 +167,21 @@ func (s *Store) Create(ctx context.Context, name string, value []byte) error {
 	return nil
 }
 
-// Set stores the given key-value pair at GCP secret manager
-// if and only if it doesn't exists. If such an entry already exists
-// it returns kes.ErrKeyExists.
-//
-// Creating a secret at the GCP SecretManager requires first creating
-// secret itself and then adding a secret version with some payload
-// data. The payload data contains the actual value.
-func (s *Store) Set(ctx context.Context, name string, value []byte) error {
-	return s.Create(ctx, name, value)
-}
-
 // Get returns the value associated with the given key.
-func (s *Store) Get(ctx context.Context, name string) ([]byte, error) {
+func (s *Store) Get(ctx context.Context, name string) (string, error) {
 	result, err := s.client.AccessSecretVersion(ctx, &secretmanagerpb.AccessSecretVersionRequest{
 		Name: path.Join("projects", s.config.ProjectID, "secrets", name, "versions", "1"),
 	})
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return nil, err
+			return "", err
 		}
 		if status.Code(err) == codes.NotFound {
-			return nil, kesdk.ErrKeyNotFound
+			return "", kesdk.ErrKeyNotFound
 		}
-		return nil, fmt.Errorf("gcp: failed to read '%s': %v", name, err)
+		return "", fmt.Errorf("gcp: failed to read '%s': %v", name, err)
 	}
-	return result.Payload.Data, nil
+	return string(result.Payload.Data), nil
 }
 
 // Delete remove the key-value pair from GCP SecretManager.

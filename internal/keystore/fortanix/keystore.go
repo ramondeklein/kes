@@ -204,7 +204,7 @@ func (s *Store) Status(ctx context.Context) (kes.KeyStoreState, error) {
 // if no entry with the given name exists.
 //
 // If no such entry exists, Create returns kes.ErrKeyExists.
-func (s *Store) Create(ctx context.Context, name string, value []byte) error {
+func (s *Store) Create(ctx context.Context, name string, value string) error {
 	type Request struct {
 		Type       string   `json:"obj_type"`
 		Name       string   `json:"name"`
@@ -219,12 +219,18 @@ func (s *Store) Create(ctx context.Context, name string, value []byte) error {
 		OpAppManageable = "APPMANAGEABLE"
 	)
 
+	// Previous versions of KES allowed storing binary values
+	// (although it never did). To deal with this properly, this
+	// key-store always base-encoded the value. To maintain
+	// compatibility with older version, we still encode the text
+	// values.
+	encodedValue := base64.StdEncoding.EncodeToString([]byte(value))
 	request, err := json.Marshal(Request{
 		Type:       Type,
 		Name:       name,
 		GroupID:    s.config.GroupID,
 		Operations: []string{OpExport, OpAppManageable},
-		Value:      base64.StdEncoding.EncodeToString(value), // Fortanix expects base64-encoded values and will not accept raw strings
+		Value:      encodedValue,
 		Enabled:    true,
 	})
 	if err != nil {
@@ -257,14 +263,6 @@ func (s *Store) Create(ctx context.Context, name string, value []byte) error {
 		}
 	}
 	return nil
-}
-
-// Set stores the given key at the Fortanix SDKMS if and only
-// if no entry with the given name exists.
-//
-// If no such entry exists, Create returns kes.ErrKeyExists.
-func (s *Store) Set(ctx context.Context, name string, value []byte) error {
-	return s.Create(ctx, name, value)
 }
 
 // Delete deletes the key associated with the given name
@@ -347,7 +345,7 @@ func (s *Store) Delete(ctx context.Context, name string) error {
 // Get returns the key associated with the given name.
 //
 // If there is no such entry, Get returns kes.ErrKeyNotFound.
-func (s *Store) Get(ctx context.Context, name string) ([]byte, error) {
+func (s *Store) Get(ctx context.Context, name string) (string, error) {
 	type Request struct {
 		Name string `json:"name"`
 	}
@@ -355,32 +353,32 @@ func (s *Store) Get(ctx context.Context, name string) ([]byte, error) {
 		Name: name,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("fortanix: failed to fetch %q: %v", name, err)
+		return "", fmt.Errorf("fortanix: failed to fetch %q: %v", name, err)
 	}
 
 	url := endpoint(s.config.Endpoint, "/crypto/v1/keys/export")
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, xhttp.RetryReader(bytes.NewReader(request)))
 	if err != nil {
-		return nil, fmt.Errorf("fortanix: failed to fetch '%s': %v", name, err)
+		return "", fmt.Errorf("fortanix: failed to fetch '%s': %v", name, err)
 	}
 	req.Header.Set("Authorization", s.config.APIKey.String())
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := s.client.Do(req)
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return nil, err
+		return "", err
 	}
 	if err != nil {
-		return nil, fmt.Errorf("fortanix: failed to fetch '%s': %v", name, err)
+		return "", fmt.Errorf("fortanix: failed to fetch '%s': %v", name, err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		switch err = parseErrorResponse(resp); {
 		case err == nil:
-			return nil, fmt.Errorf("fortanix: failed to fetch '%s': %s (%d)", name, resp.Status, resp.StatusCode)
+			return "", fmt.Errorf("fortanix: failed to fetch '%s': %s (%d)", name, resp.Status, resp.StatusCode)
 		case resp.StatusCode == http.StatusNotFound && err.Error() == "sobject does not exist":
-			return nil, kesdk.ErrKeyNotFound
+			return "", kesdk.ErrKeyNotFound
 		default:
-			return nil, fmt.Errorf("fortanix: failed to fetch '%s': %v", name, err)
+			return "", fmt.Errorf("fortanix: failed to fetch '%s': %v", name, err)
 		}
 	}
 
@@ -390,16 +388,19 @@ func (s *Store) Get(ctx context.Context, name string) ([]byte, error) {
 	}
 	var response Response
 	if err := json.NewDecoder(mem.LimitReader(resp.Body, mem.MB)).Decode(&response); err != nil {
-		return nil, fmt.Errorf("fortanix: failed to fetch '%s': failed to parse server response %v", name, err)
+		return "", fmt.Errorf("fortanix: failed to fetch '%s': failed to parse server response %v", name, err)
 	}
 	if !response.Enabled {
-		return nil, fmt.Errorf("fortanix: failed to fetch '%s': key has been disabled and cannot be used until enabled again", name)
+		return "", fmt.Errorf("fortanix: failed to fetch '%s': key has been disabled and cannot be used until enabled again", name)
 	}
 	value, err := base64.StdEncoding.DecodeString(response.Value)
 	if err != nil {
-		return nil, fmt.Errorf("fortanix: failed to fetch '%s': %v", name, err)
+		return "", fmt.Errorf("fortanix: failed to fetch '%s': %v", name, err)
 	}
-	return value, nil
+
+	// Only text values are stored, but for legacy reasons, the text
+	// is always encoded again. See `Create` for more information.
+	return string(value), nil
 }
 
 // List returns a new Iterator over the names of

@@ -79,7 +79,7 @@ func TestSecretKeyDecrypt(t *testing.T) {
 
 func TestParseKeyVersion(t *testing.T) {
 	for i, test := range parseKeyVersionTests {
-		key, err := ParseKeyVersion([]byte(test.Raw))
+		key, err := ParseKeyVersion(test.Raw)
 		if err != nil && !test.ShouldFail {
 			t.Fatalf("Test %d: failed to parse key: %v", i, err)
 		}

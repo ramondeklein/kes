@@ -150,7 +150,7 @@ func (kc *KeyControl) Status(ctx context.Context) (kes.KeyStoreState, error) {
 // Create creates the given key-value pair at the KeyControl server
 // if and only if the given key does not exist. If such an entry
 // already exists it returns kes.ErrKeyExists.
-func (kc *KeyControl) Create(ctx context.Context, name string, key []byte) error {
+func (kc *KeyControl) Create(ctx context.Context, name string, key string) error {
 	const (
 		Method     = http.MethodPost
 		Path       = "/vault/1.0/CreateSecret/"
@@ -165,7 +165,7 @@ func (kc *KeyControl) Create(ctx context.Context, name string, key []byte) error
 	body, err := json.Marshal(Request{
 		BoxID:      kc.config.BoxID,
 		Name:       name,
-		SecretData: key,
+		SecretData: []byte(key),
 	})
 	if err != nil {
 		return fmt.Errorf("keycontrol: failed to create key: %v", err)
@@ -191,16 +191,9 @@ func (kc *KeyControl) Create(ctx context.Context, name string, key []byte) error
 	return nil
 }
 
-// Set creates the given key-value pair at the KeyControl server
-// if and only if the given key does not exist. If such an entry
-// already exists it returns kes.ErrKeyExists.
-func (kc *KeyControl) Set(ctx context.Context, name string, key []byte) error {
-	return kc.Create(ctx, name, key)
-}
-
 // Get returns the value associated with the given key.
 // If no entry for the key exists it returns kes.ErrKeyNotFound.
-func (kc *KeyControl) Get(ctx context.Context, name string) ([]byte, error) {
+func (kc *KeyControl) Get(ctx context.Context, name string) (string, error) {
 	const (
 		Method     = http.MethodPost
 		Path       = "/vault/1.0/CheckoutSecret/"
@@ -219,34 +212,34 @@ func (kc *KeyControl) Get(ctx context.Context, name string) ([]byte, error) {
 		SecretID: name,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("keycontrol: failed to fetch key: %v", err)
+		return "", fmt.Errorf("keycontrol: failed to fetch key: %v", err)
 	}
 	url, err := url.JoinPath(kc.config.Endpoint, Path)
 	if err != nil {
-		return nil, fmt.Errorf("keycontrol: failed to fetch key: %v", err)
+		return "", fmt.Errorf("keycontrol: failed to fetch key: %v", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, Method, url, xhttp.RetryReader(bytes.NewReader(body)))
 	if err != nil {
-		return nil, fmt.Errorf("keycontrol: failed to fetch key: %v", err)
+		return "", fmt.Errorf("keycontrol: failed to fetch key: %v", err)
 	}
 	req.ContentLength = int64(len(body))
 	req.Header.Set(VaultToken, *kc.token.Load())
 
 	resp, err := kc.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("keycontrol: failed to fetch key: %v", err)
+		return "", fmt.Errorf("keycontrol: failed to fetch key: %v", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, parseErrorResponse(resp)
+		return "", parseErrorResponse(resp)
 	}
 
 	var response Response
 	if err := json.NewDecoder(mem.LimitReader(resp.Body, 1*mem.MB)).Decode(&response); err != nil {
-		return nil, fmt.Errorf("keycontrol: failed to fetch key: %v", err)
+		return "", fmt.Errorf("keycontrol: failed to fetch key: %v", err)
 	}
-	return response.Secret, nil
+	return string(response.Secret), nil
 }
 
 // Delete removes a the value associated with the given key

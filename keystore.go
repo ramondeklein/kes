@@ -33,7 +33,7 @@ type KeyStore interface {
 	// Create creates a new entry with the given name if and only
 	// if no such entry exists.
 	// Otherwise, Create returns kes.ErrKeyExists.
-	Create(ctx context.Context, name string, value []byte) error
+	Create(ctx context.Context, name string, value string) error
 
 	// Delete removes the entry. It may return either no error or
 	// kes.ErrKeyNotFound if no such entry exists.
@@ -41,7 +41,7 @@ type KeyStore interface {
 
 	// Get returns the value for the given name. It returns
 	// kes.ErrKeyNotFound if no such entry exits.
-	Get(ctx context.Context, name string) ([]byte, error)
+	Get(ctx context.Context, name string) (string, error)
 
 	// List returns the first n key names, that start with the given
 	// prefix, and the next prefix from which the listing should
@@ -67,7 +67,7 @@ type KeyStoreState struct {
 // from different go routines. It is optimized for reads but not
 // well-suited for many writes/deletes.
 type MemKeyStore struct {
-	keys cache.Cow[string, []byte]
+	keys cache.Cow[string, string]
 }
 
 var _ KeyStore = (*MemKeyStore)(nil) // compiler check
@@ -85,8 +85,8 @@ func (ks *MemKeyStore) Status(context.Context) (KeyStoreState, error) {
 // Create creates a new entry with the given name if and only
 // if no such entry exists.
 // Otherwise, Create returns kes.ErrKeyExists.
-func (ks *MemKeyStore) Create(_ context.Context, name string, value []byte) error {
-	if !ks.keys.Add(name, slices.Clone(value)) {
+func (ks *MemKeyStore) Create(_ context.Context, name string, value string) error {
+	if !ks.keys.Add(name, value) {
 		return kes.ErrKeyExists
 	}
 	return nil
@@ -103,11 +103,11 @@ func (ks *MemKeyStore) Delete(_ context.Context, name string) error {
 
 // Get returns the value for the given name. It returns
 // kes.ErrKeyNotFound if no such entry exits.
-func (ks *MemKeyStore) Get(_ context.Context, name string) ([]byte, error) {
+func (ks *MemKeyStore) Get(_ context.Context, name string) (string, error) {
 	if val, ok := ks.keys.Get(name); ok {
-		return slices.Clone(val), nil
+		return val, nil
 	}
-	return nil, kes.ErrKeyNotFound
+	return "", kes.ErrKeyNotFound
 }
 
 // List returns the first n key names that start with the given

@@ -187,7 +187,7 @@ func (s *Store) Status(ctx context.Context) (kes.KeyStoreState, error) {
 // Create creates the given key-value pair at Vault if and only
 // if the given key does not exist. If such an entry already exists
 // it returns kes.ErrKeyExists.
-func (s *Store) Create(ctx context.Context, name string, value []byte) error {
+func (s *Store) Create(ctx context.Context, name string, value string) error {
 	if s.client == nil {
 		return errors.New("vault: no connection to " + s.config.Endpoint)
 	}
@@ -254,7 +254,9 @@ func (s *Store) Create(ctx context.Context, name string, value []byte) error {
 		encLocation := path.Join(s.config.Transit.Engine, "encrypt", s.config.Transit.KeyName)
 		req := s.client.Client.NewRequest(http.MethodPost, "/v1/"+encLocation)
 		if err := req.SetJSONBody(map[string]any{
-			"plaintext": base64.StdEncoding.EncodeToString(value),
+			// The value is encoded again to maintain compatibility with
+			// older versions of KES
+			"plaintext": base64.StdEncoding.EncodeToString([]byte(value)),
 		}); err != nil {
 			return fmt.Errorf("vault: failed to create '%s': failed to encrypt key: %v", location, err)
 		}
@@ -285,7 +287,7 @@ func (s *Store) Create(ctx context.Context, name string, value []byte) error {
 		if !ok || !strings.HasPrefix(v, "vault:v1:") {
 			return fmt.Errorf("vault: failed to create '%s': failed to encrypt key: invalid vault response", location)
 		}
-		value = []byte(v)
+		value = v
 	}
 
 	// Finally, we create the value since it seems that it
@@ -301,12 +303,12 @@ func (s *Store) Create(ctx context.Context, name string, value []byte) error {
 				"cas": 0, // We need to set CAS to 0 to ensure atomic creates / avoid any overwrite.
 			},
 			"data": map[string]interface{}{
-				name: string(value),
+				name: value,
 			},
 		}
 	} else {
 		data = map[string]interface{}{
-			name: string(value),
+			name: value,
 		}
 	}
 
@@ -342,9 +344,9 @@ func (s *Store) Create(ctx context.Context, name string, value []byte) error {
 
 // Get returns the value associated with the given key.
 // If no entry for the key exists it returns kes.ErrKeyNotFound.
-func (s *Store) Get(ctx context.Context, name string) ([]byte, error) {
+func (s *Store) Get(ctx context.Context, name string) (string, error) {
 	if s.client.Sealed() {
-		return nil, errSealed
+		return "", errSealed
 	}
 
 	var (
@@ -361,25 +363,25 @@ func (s *Store) Get(ctx context.Context, name string) ([]byte, error) {
 		// Vault will not return an error if e.g. the key existed but has
 		// been deleted. However, it will return (nil, nil) in this case.
 		if (err == nil && entry == nil) || errors.Is(err, vaultapi.ErrSecretNotFound) {
-			return nil, kesdk.ErrKeyNotFound
+			return "", kesdk.ErrKeyNotFound
 		}
-		return nil, fmt.Errorf("vault: failed to read '%s': %v", location, err)
+		return "", fmt.Errorf("vault: failed to read '%s': %v", location, err)
 	}
 
 	// Verify that we got a well-formed response from Vault
 	v, ok := entry.Data[name]
 	if !ok || v == nil {
-		return nil, fmt.Errorf("vault: failed to read '%s': entry exists but no secret key is present", location)
+		return "", fmt.Errorf("vault: failed to read '%s': entry exists but no secret key is present", location)
 	}
 	value, ok := v.(string)
 	if !ok {
-		return nil, fmt.Errorf("vault: failed to read '%s': invalid K/V format", location)
+		return "", fmt.Errorf("vault: failed to read '%s': invalid K/V format", location)
 	}
 
 	// Handle transit encrypted K/V entries
 	if strings.HasPrefix(value, "vault:v1:") {
 		if s.config.Transit == nil {
-			return nil, fmt.Errorf("vault: failed to read '%s': key is encrypted with vault transit key", location)
+			return "", fmt.Errorf("vault: failed to read '%s': key is encrypted with vault transit key", location)
 		}
 
 		decLocation := path.Join(s.config.Transit.Engine, "decrypt", s.config.Transit.KeyName)
@@ -387,38 +389,39 @@ func (s *Store) Get(ctx context.Context, name string) ([]byte, error) {
 		if err := req.SetJSONBody(map[string]any{
 			"ciphertext": value,
 		}); err != nil {
-			return nil, fmt.Errorf("vault: failed to read '%s': failed to decrypt key: %v", location, err)
+			return "", fmt.Errorf("vault: failed to read '%s': failed to decrypt key: %v", location, err)
 		}
 
 		resp, err := s.client.Client.RawRequestWithContext(ctx, req)
 		if err != nil {
-			return nil, fmt.Errorf("vault: failed to read '%s': failed to decrypt key: %v", location, err)
+			return "", fmt.Errorf("vault: failed to read '%s': failed to decrypt key: %v", location, err)
 		}
 		if resp != nil && resp.Body != nil {
 			defer resp.Body.Close()
 		}
 		if resp.StatusCode != http.StatusOK {
 			if _, err = vaultapi.ParseSecret(resp.Body); err != nil {
-				return nil, fmt.Errorf("vault: failed to read '%s': failed to encrypt key: %v", location, err)
+				return "", fmt.Errorf("vault: failed to read '%s': failed to encrypt key: %v", location, err)
 			}
-			return nil, fmt.Errorf("vault: failed to read '%s': server responded with: %s (%d)", location, resp.Status, resp.StatusCode)
+			return "", fmt.Errorf("vault: failed to read '%s': server responded with: %s (%d)", location, resp.Status, resp.StatusCode)
 		}
 
 		secret, err := vaultapi.ParseSecret(resp.Body)
 		if err != nil {
-			return nil, fmt.Errorf("vault: failed to read '%s': failed to decrypt key: %v", location, err)
+			return "", fmt.Errorf("vault: failed to read '%s': failed to decrypt key: %v", location, err)
 		}
 		plaintext, ok := secret.Data["plaintext"]
 		if !ok {
-			return nil, fmt.Errorf("vault: failed to read '%s': failed to decrypt key: no plaintext in vault response", location)
+			return "", fmt.Errorf("vault: failed to read '%s': failed to decrypt key: no plaintext in vault response", location)
 		}
 		value, ok = plaintext.(string)
 		if !ok {
-			return nil, fmt.Errorf("vault: failed to read '%s': failed to decrypt key: invalid vault response", location)
+			return "", fmt.Errorf("vault: failed to read '%s': failed to decrypt key: invalid vault response", location)
 		}
-		return base64.StdEncoding.DecodeString(value)
+		value, err := base64.StdEncoding.DecodeString(value)
+		return string(value), err
 	}
-	return []byte(value), nil
+	return value, nil
 }
 
 // Delete removes a the value associated with the given key
